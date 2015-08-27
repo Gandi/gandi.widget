@@ -2,12 +2,14 @@
 
 import os
 
-from gi.repository import Gtk, GLib
+from gi.repository import Gtk, GLib, GObject
 from gi.repository import AppIndicator3 as appindicator
 from gi.repository import Notify
 
 from gandi.cli.modules.status import Status
 from gandi.cli.core.conf import GandiConfig
+
+from .async import Async, log
 
 from .certificate import Certificate
 from .iaas import Iaas
@@ -43,6 +45,9 @@ class GandiWidget:
         refresh = self.conf.get('refresh') or 60
         status_refresh = self.conf.get('status_refresh') or 20
 
+        # init async object
+        self.async = Async()
+
         # create a menu
         self.menu = Gtk.Menu()
         # Add items to Menu and connect signals.
@@ -53,21 +58,22 @@ class GandiWidget:
         GLib.timeout_add_seconds(status_refresh, self.on_status_refresh)
 
     def build_menu(self):
+        fetching = Gtk.MenuItem('Fetching...')
+        fetching.show()
+
         for name, label, kls in self._subs:
             if name not in self.sections:
-                continue
-
-            elements = kls(self).list()
-            if not elements:
                 continue
 
             menu_item = Gtk.ImageMenuItem.new_with_label(label)
             menu_item.set_always_show_image(False)
             menu_item.show()
 
+            self.async.add_task(self.done_fetching, kls(self).list,
+                                menu_item)
+
             sub_menu = Gtk.Menu.new()
-            for item in elements:
-                sub_menu.append(item)
+            sub_menu.append(fetching)
 
             menu_item.set_submenu(sub_menu)
             self.menu.append(menu_item)
@@ -88,6 +94,17 @@ class GandiWidget:
 
         self.menu.show()
         self.indicator.set_menu(self.menu)
+
+    def done_fetching(self, menu_item, elements):
+        log('done fetching', menu_item, elements)
+        if not elements:
+            return
+
+        sub_menu = Gtk.Menu.new()
+        for item in elements:
+            sub_menu.append(item)
+
+        menu_item.set_submenu(sub_menu)
 
     def on_refresh(self, widget=None):
         self.rebuild_menu()
@@ -125,6 +142,8 @@ class GandiWidget:
 
 
 if __name__ == "__main__":
+    # init threads
+    GObject.threads_init()
     # create the widget menu
     GandiWidget()
     # run the widget
